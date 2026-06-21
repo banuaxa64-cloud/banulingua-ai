@@ -3,6 +3,7 @@ import streamlit.components.v1 as components
 import html
 import os
 import base64
+import json
 import requests
 
 # ١. ڕێکخستنی سەرەتایی ئەپەکە
@@ -15,8 +16,34 @@ if os.path.exists(LOGO_PATH):
 page_icon = LOGO_PATH if os.path.exists(LOGO_PATH) else "🔮"
 st.set_page_config(page_title="BanuLingua AI", page_icon=page_icon, layout="centered")
 
-# ٢. ئایکۆن، viewport، و چاککردنەوەی بازدانی کیبۆردی مۆبایل
-icon_js = f'addLink("icon", "data:image/png;base64,{logo_base64}"); addLink("apple-touch-icon", "data:image/png;base64,{logo_base64}");' if logo_base64 else ""
+# ٢. ئایکۆن، manifest، viewport، و قەرەبووکردنەوەی شاشە بۆ مۆبایل
+# (manifest واقیعی دروست دەکات بۆ ئەوەی ناو و لۆگۆی خۆمان لە هۆم سکرین دەربکەوێت)
+manifest_js = ""
+icon_links_js = ""
+if logo_base64:
+    manifest_js = f"""
+    var manifestObj = {{
+        name: "BanuLingua AI",
+        short_name: "BanuLingua",
+        start_url: ".",
+        display: "standalone",
+        background_color: "#1a1625",
+        theme_color: "#8b5cf6",
+        icons: [
+            {{ src: "data:image/png;base64,{logo_base64}", sizes: "192x192", type: "image/png" }},
+            {{ src: "data:image/png;base64,{logo_base64}", sizes: "512x512", type: "image/png" }}
+        ]
+    }};
+    var manifestBlob = new Blob([JSON.stringify(manifestObj)], {{type: 'application/json'}});
+    var manifestURL = URL.createObjectURL(manifestBlob);
+    var existingManifest = window.parent.document.querySelector('link[rel="manifest"]');
+    if (existingManifest) {{ existingManifest.setAttribute('href', manifestURL); }}
+    else {{ addLink('manifest', manifestURL); }}
+    """
+    icon_links_js = f"""
+    addLink("icon", "data:image/png;base64,{logo_base64}");
+    addLink("apple-touch-icon", "data:image/png;base64,{logo_base64}");
+    """
 
 components.html(f"""
 <script>
@@ -36,30 +63,49 @@ function addMeta(name, content) {{
         window.parent.document.head.appendChild(meta);
     }}
 }}
-{icon_js}
+{icon_links_js}
+{manifest_js}
 addMeta('apple-mobile-web-app-capable', 'yes');
+addMeta('apple-mobile-web-app-title', 'BanuLingua AI');
 addMeta('mobile-web-app-capable', 'yes');
 addMeta('theme-color', '#8b5cf6');
-addMeta('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover');
+addMeta('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content');
 
-if (window.parent.visualViewport) {{
-    window.parent.visualViewport.addEventListener('resize', function() {{
-        var chatEnd = window.parent.document.getElementById('chat-end');
-        if (chatEnd) {{ chatEnd.scrollIntoView({{behavior: 'auto', block: 'end'}}); }}
-    }});
+function pinToBottom() {{
+    var chatEnd = window.parent.document.getElementById('chat-end');
+    if (chatEnd) {{ chatEnd.scrollIntoView({{behavior: 'auto', block: 'end'}}); }}
 }}
+if (window.parent.visualViewport) {{
+    window.parent.visualViewport.addEventListener('resize', pinToBottom);
+    window.parent.visualViewport.addEventListener('scroll', pinToBottom);
+}}
+window.parent.document.addEventListener('focusin', function(e) {{
+    if (e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')) {{
+        setTimeout(pinToBottom, 300);
+    }}
+}});
 </script>
 """, height=0, width=0)
 
-# ٣. ڕەنگدانەری مۆری ئاسوودەبەخش
+# ٣. ڕووکار: ڕەنگی مۆری ئاسوودەبەخش + شاشەی چەسپاو وەک ئەپێکی ڕاستەقینە
 st.markdown("""
 <style>
+html, body {
+    overscroll-behavior: none;
+}
 .stApp {
     background-color: var(--background-color);
     background-image: linear-gradient(135deg,
         rgba(167,139,250,0.12) 0%,
         rgba(196,181,253,0.06) 45%,
         rgba(221,214,254,0.10) 100%);
+    height: 100dvh;
+    overflow: hidden;
+}
+[data-testid="stMain"] {
+    height: 100dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 section[data-testid="stSidebar"] {
     background-color: rgba(139,92,246,0.07);
@@ -79,6 +125,12 @@ section[data-testid="stSidebar"] {
 }
 h1, h2, h3 {
     color: #8b5cf6 !important;
+}
+.phonetic-guide {
+    font-size: 0.8rem;
+    opacity: 0.65;
+    margin-top: 4px;
+    font-style: italic;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -148,11 +200,15 @@ for chat in st.session_state.chat_history:
         """, unsafe_allow_html=True)
     else:
         text_direction = "ltr" if "کوردی" in direction else "rtl"
+        phonetic_html = ""
+        if chat.get("phonetic"):
+            phonetic_html = f"<div class='phonetic-guide' dir='rtl'>🔊 {html.escape(chat['phonetic'])}</div>"
         st.markdown(f"""
         <div style='background-color: rgba(196,181,253,0.20); color: var(--text-color);
                     padding: 12px 16px; border-radius: 14px; margin-bottom: 14px;
                     direction: {text_direction}; max-width: 85%; margin-right: auto;'>
             {html.escape(chat['text'])}
+            {phonetic_html}
         </div>
         """, unsafe_allow_html=True)
 
@@ -164,18 +220,17 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 
-st.markdown("---")
 
-
-# ٧. وەرگێڕانی کۆنتێکستی بەکارهێنانی Gemini API (خۆڕایی)
+# ٧. وەرگێڕانی کۆنتێکستی + ئاوای خوێندنەوە بەکارهێنانی Gemini API (خۆڕایی)
 def gemini_translate(text, direction, style):
-    if "کوردی بۆ ئینگلیزی" in direction:
+    to_english = "کوردی بۆ ئینگلیزی" in direction
+    if to_english:
         src, tgt = "سۆرانی کوردی", "ئینگلیزی"
     else:
         src, tgt = "ئینگلیزی", "سۆرانی کوردی بە ئەلفوبێی عەرەبی-کوردی"
 
     style_note = ""
-    if "کوردی بۆ ئینگلیزی" in direction:
+    if to_english:
         if "British" in style:
             style_note = " بە شێوازی ئینگلیزی بەریتانی."
         elif "Slang" in style:
@@ -183,10 +238,19 @@ def gemini_translate(text, direction, style):
         else:
             style_note = " بە شێوازی ئینگلیزی ئەمریکی."
 
+    phonetic_instruction = ""
+    if to_english:
+        phonetic_instruction = (
+            " هەروەها ئاوای خوێندنەوەی دەقی ئینگلیزییەکە بنووسە بە پیتی کوردی (ئەلفوبێی عەرەبی-کوردی)، "
+            "وەک نموونە بۆ وشەی hello بنووسە هێلۆ."
+        )
+
     system_prompt = (
         f"تۆ وەرگێڕێکی پیشەیی و کۆنتێکستیت. دەقی بەکارهێنەر لە {src}ـەوە وەربگێڕە بۆ {tgt}."
-        f"{style_note} وەرگێڕانەکە دەبێت سروشتی و ڕەوان بێت، نەک وشە-بە-وشە. "
-        "تەنها دەقی وەرگێڕدراو بنووسە، هیچ ڕوونکردنەوەیەک یان شتی زیاتر زیاد مەکە."
+        f"{style_note} وەرگێڕانەکە دەبێت سروشتی و ڕەوان بێت، نەک وشە-بە-وشە."
+        f"{phonetic_instruction}"
+        " وەڵامەکەت تەنها بە فۆرماتی JSON بنووسە بەم شێوەیە، هیچ شتێکی زیاتر، هیچ Markdown، هیچ ```:"
+        ' {"translation": "دەقی وەرگێڕدراو", "phonetic": "ئاوای خوێندنەوە بە کوردی یان بەتاڵ ئەگەر پێویست نەبوو"}'
     )
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={st.session_state.api_key}"
@@ -197,7 +261,14 @@ def gemini_translate(text, direction, style):
     resp = requests.post(url, json=body, timeout=30)
     resp.raise_for_status()
     data = resp.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+    try:
+        parsed = json.loads(cleaned)
+        return parsed.get("translation", raw).strip(), parsed.get("phonetic", "").strip()
+    except Exception:
+        return raw, ""
 
 
 user_input = st.chat_input("سڵاو، چۆنی؟... ڕستەکەت لێرە بنووسە")
@@ -206,9 +277,10 @@ if user_input:
     st.session_state.chat_history.append({"type": "user", "text": user_input})
 
     translated = None
+    phonetic = ""
     if st.session_state.get("api_key"):
         try:
-            translated = gemini_translate(user_input, direction, english_style)
+            translated, phonetic = gemini_translate(user_input, direction, english_style)
         except Exception:
             translated = None
 
@@ -228,5 +300,5 @@ if user_input:
             else:
                 translated = f"وەرگێڕانی '{user_input}' بە شێوازی کوردی"
 
-    st.session_state.chat_history.append({"type": "bot", "text": translated})
+    st.session_state.chat_history.append({"type": "bot", "text": translated, "phonetic": phonetic})
     st.rerun()
